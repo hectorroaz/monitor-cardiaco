@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitor de Frecuencia Cardíaca BLE</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Simple transition for better UX */
+        button {
+            transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        /* Heartbeat animation */
+        @keyframes pulsate {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+            100% { transform: scale(1); }
+        }
+        .heartbeat-animation {
+            animation-name: pulsate;
+            animation-duration: 1s; /* This will be updated by JS */
+            animation-iteration-count: infinite;
+            animation-timing-function: ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-lg p-8 space-y-6 text-center">
+        
+        <header>
+            <h1 class="text-3xl font-bold text-gray-900">Monitor de Ritmo Cardíaco</h1>
+            <p class="text-gray-600 mt-2">Conéctate a tu banda de frecuencia cardíaca BLE.</p>
+        </header>
+
+        <!-- Heart Rate Display -->
+        <div class="border border-gray-200 rounded-lg p-6">
+            <div class="flex justify-center items-center mb-4">
+                <svg id="heartIcon" class="w-16 h-16 text-red-500" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path></svg>
+            </div>
+            <div id="heartRateDisplay" class="text-7xl font-bold text-gray-800 tracking-tight">--</div>
+            <div class="text-lg text-gray-500">BPM</div>
+            <p id="bluetoothStatus" class="mt-4 text-sm text-gray-600 h-5">Estado: Desconectado</p>
+        </div>
+
+        <!-- Connection Button -->
+        <div>
+            <button id="connectBluetooth" class="w-full bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400">
+                Conectar a Sensor
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        const connectBluetoothBtn = document.getElementById('connectBluetooth');
+        const bluetoothStatusElem = document.getElementById('bluetoothStatus');
+        const heartRateDisplayElem = document.getElementById('heartRateDisplay');
+        const heartIconElem = document.getElementById('heartIcon');
+
+        let heartRateCharacteristic = null;
+        let bleDevice = null;
+
+        // --- Bluetooth Logic ---
+        connectBluetoothBtn.addEventListener('click', async () => {
+            // Check if Web Bluetooth API is available
+            if (!navigator.bluetooth) {
+                bluetoothStatusElem.textContent = 'Error: Web Bluetooth no es compatible.';
+                bluetoothStatusElem.classList.add('text-red-600');
+                return;
+            }
+
+            try {
+                // --- 1. Request Device ---
+                bluetoothStatusElem.textContent = 'Buscando sensor...';
+                connectBluetoothBtn.disabled = true;
+                
+                // Request a device that has the 'heart_rate' service
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: ['heart_rate'] }],
+                    optionalServices: ['device_information'] // Optional, but good to have
+                });
+
+                bluetoothStatusElem.textContent = `Conectando a ${bleDevice.name || 'dispositivo'}...`;
+
+                // Add a listener for when the device gets disconnected
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+                // --- 2. Connect to GATT Server ---
+                const server = await bleDevice.gatt.connect();
+                bluetoothStatusElem.textContent = 'Obteniendo servicio...';
+
+                // --- 3. Get Service & Characteristic ---
+                const service = await server.getPrimaryService('heart_rate');
+                heartRateCharacteristic = await service.getCharacteristic('heart_rate_measurement');
+
+                // --- 4. Start Notifications ---
+                await heartRateCharacteristic.startNotifications();
+                bluetoothStatusElem.textContent = '¡Conectado! Escuchando latidos...';
+                bluetoothStatusElem.classList.add('text-green-600');
+                
+                // Listen for 'characteristicvaluechanged' events
+                heartRateCharacteristic.addEventListener('characteristicvaluechanged', handleHeartRateNotification);
+
+            } catch (error) {
+                console.error('Bluetooth Error:', error);
+                bluetoothStatusElem.textContent = `Error: ${error.message}`;
+                bluetoothStatusElem.classList.add('text-red-600');
+                connectBluetoothBtn.disabled = false;
+            }
+        });
+
+        /**
+         * Handles incoming heart rate data notifications.
+         * @param {Event} event The event from the characteristic.
+         */
+        function handleHeartRateNotification(event) {
+            const value = event.target.value;
+            const heartRate = parseHeartRate(value);
+            
+            // Update the UI with the new heart rate
+            heartRateDisplayElem.textContent = heartRate;
+            
+            // Update the heart animation speed based on BPM
+            if (heartRate > 0) {
+                const animationDuration = 60 / heartRate;
+                heartIconElem.style.animationDuration = `${animationDuration.toFixed(2)}s`;
+                heartIconElem.classList.add('heartbeat-animation');
+            } else {
+                heartIconElem.classList.remove('heartbeat-animation');
+            }
+        }
+
+        /**
+         * Parses the heart rate value from the raw data received from the sensor.
+         * Bluetooth Heart Rate Service specification:
+         * https://www.bluetooth.com/specifications/gatt/services/
+         * @param {DataView} value The raw data from the sensor.
+         * @returns {number} The heart rate in BPM.
+         */
+        function parseHeartRate(value) {
+            // The first byte of the data contains flags.
+            const flags = value.getUint8(0);
+            
+            // The first bit of the flags indicates if the heart rate is UINT8 or UINT16.
+            const rate16Bits = (flags & 0x1) !== 0;
+            
+            // The heart rate value starts at the second byte.
+            if (rate16Bits) {
+                // If the bit is 1, the value is a 16-bit integer.
+                return value.getUint16(1, /*littleEndian=*/true);
+            } else {
+                // If the bit is 0, the value is an 8-bit integer.
+                return value.getUint8(1);
+            }
+        }
+
+        /**
+         * Handles the disconnection event.
+         */
+        function onDisconnected() {
+            bluetoothStatusElem.textContent = 'Dispositivo desconectado.';
+            bluetoothStatusElem.classList.remove('text-green-600');
+            bluetoothStatusElem.classList.add('text-red-600');
+            
+            heartRateDisplayElem.textContent = '--';
+            heartIconElem.classList.remove('heartbeat-animation');
+            connectBluetoothBtn.disabled = false;
+            
+            // Clean up the event listener
+            if (heartRateCharacteristic) {
+                heartRateCharacteristic.removeEventListener('characteristicvaluechanged', handleHeartRateNotification);
+                heartRateCharacteristic = null;
+            }
+        }
+    </script>
+
+</body>
+</html>
