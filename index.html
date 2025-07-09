@@ -14,14 +14,12 @@
         body {
             font-family: 'Inter', sans-serif;
         }
-        /* Simple transition for better UX */
         button {
             transition: background-color 0.3s ease, transform 0.1s ease;
         }
         button:active {
             transform: scale(0.98);
         }
-        /* Heartbeat animation */
         @keyframes pulsate {
             0% { transform: scale(1); }
             50% { transform: scale(1.15); }
@@ -29,16 +27,25 @@
         }
         .heartbeat-animation {
             animation-name: pulsate;
-            animation-duration: 1s; /* This will be updated by JS */
+            animation-duration: 1s;
             animation-iteration-count: infinite;
             animation-timing-function: ease-in-out;
+        }
+        /* Pantalla completa personalizada */
+        #fullscreenContainer {
+            background: #000 !important;
+        }
+        @media (orientation: landscape) {
+            #fullscreenHeartRate {
+                font-size: 18vw !important;
+            }
         }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800 flex items-center justify-center min-h-screen p-4">
 
     <div class="w-full max-w-md bg-white rounded-2xl shadow-lg p-8 space-y-6 text-center">
-        
+
         <header>
             <h1 class="text-3xl font-bold text-gray-900">Monitor de Ritmo Cardíaco</h1>
             <p class="text-gray-600 mt-2">Conéctate a tu banda de frecuencia cardíaca BLE.</p>
@@ -61,56 +68,87 @@
             </button>
         </div>
 
+        <!-- Fullscreen Button -->
+        <div>
+            <button id="fullscreenBtn" class="w-full mt-3 bg-black text-white font-semibold py-3 px-6 rounded-lg hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black">
+                Pantalla Completa
+            </button>
+        </div>
+    </div>
+
+    <!-- Fullscreen Container -->
+    <div id="fullscreenContainer" class="hidden fixed inset-0 bg-black flex flex-col justify-center items-center z-50">
+        <div id="fullscreenHeartRate" class="text-white text-[14vw] font-extrabold">--</div>
+        <div class="text-xl text-gray-300">BPM</div>
+        <button id="exitFullscreenBtn" class="mt-8 bg-gray-800 text-white px-8 py-4 rounded-lg text-xl hover:bg-gray-900">Salir</button>
     </div>
 
     <script>
+        // Wake Lock
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => {
+                        console.log('Wake Lock was released');
+                    });
+                    console.log('Wake Lock is active');
+                }
+            } catch (err) {
+                console.error(`${err.name}, ${err.message}`);
+            }
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                requestWakeLock();
+            }
+        });
+
+        // UI Elements
         const connectBluetoothBtn = document.getElementById('connectBluetooth');
         const bluetoothStatusElem = document.getElementById('bluetoothStatus');
         const heartRateDisplayElem = document.getElementById('heartRateDisplay');
         const heartIconElem = document.getElementById('heartIcon');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        const fullscreenContainer = document.getElementById('fullscreenContainer');
+        const fullscreenHeartRate = document.getElementById('fullscreenHeartRate');
+        const exitFullscreenBtn = document.getElementById('exitFullscreenBtn');
 
         let heartRateCharacteristic = null;
         let bleDevice = null;
 
         // --- Bluetooth Logic ---
         connectBluetoothBtn.addEventListener('click', async () => {
-            // Check if Web Bluetooth API is available
             if (!navigator.bluetooth) {
                 bluetoothStatusElem.textContent = 'Error: Web Bluetooth no es compatible.';
                 bluetoothStatusElem.classList.add('text-red-600');
                 return;
             }
-
             try {
-                // --- 1. Request Device ---
                 bluetoothStatusElem.textContent = 'Buscando sensor...';
                 connectBluetoothBtn.disabled = true;
-                
-                // Request a device that has the 'heart_rate' service
+
                 bleDevice = await navigator.bluetooth.requestDevice({
                     filters: [{ services: ['heart_rate'] }],
-                    optionalServices: ['device_information'] // Optional, but good to have
+                    optionalServices: ['device_information']
                 });
 
                 bluetoothStatusElem.textContent = `Conectando a ${bleDevice.name || 'dispositivo'}...`;
 
-                // Add a listener for when the device gets disconnected
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
 
-                // --- 2. Connect to GATT Server ---
                 const server = await bleDevice.gatt.connect();
                 bluetoothStatusElem.textContent = 'Obteniendo servicio...';
 
-                // --- 3. Get Service & Characteristic ---
                 const service = await server.getPrimaryService('heart_rate');
                 heartRateCharacteristic = await service.getCharacteristic('heart_rate_measurement');
 
-                // --- 4. Start Notifications ---
                 await heartRateCharacteristic.startNotifications();
                 bluetoothStatusElem.textContent = '¡Conectado! Escuchando latidos...';
                 bluetoothStatusElem.classList.add('text-green-600');
-                
-                // Listen for 'characteristicvaluechanged' events
+                requestWakeLock(); // Mantener pantalla activa
+
                 heartRateCharacteristic.addEventListener('characteristicvaluechanged', handleHeartRateNotification);
 
             } catch (error) {
@@ -121,17 +159,14 @@
             }
         });
 
-        /**
-         * Handles incoming heart rate data notifications.
-         * @param {Event} event The event from the characteristic.
-         */
         function handleHeartRateNotification(event) {
             const value = event.target.value;
             const heartRate = parseHeartRate(value);
-            
+
             // Update the UI with the new heart rate
             heartRateDisplayElem.textContent = heartRate;
-            
+            updateFullScreenHeartRate(heartRate);
+
             // Update the heart animation speed based on BPM
             if (heartRate > 0) {
                 const animationDuration = 60 / heartRate;
@@ -142,49 +177,62 @@
             }
         }
 
-        /**
-         * Parses the heart rate value from the raw data received from the sensor.
-         * Bluetooth Heart Rate Service specification:
-         * https://www.bluetooth.com/specifications/gatt/services/
-         * @param {DataView} value The raw data from the sensor.
-         * @returns {number} The heart rate in BPM.
-         */
         function parseHeartRate(value) {
-            // The first byte of the data contains flags.
             const flags = value.getUint8(0);
-            
-            // The first bit of the flags indicates if the heart rate is UINT8 or UINT16.
             const rate16Bits = (flags & 0x1) !== 0;
-            
-            // The heart rate value starts at the second byte.
             if (rate16Bits) {
-                // If the bit is 1, the value is a 16-bit integer.
-                return value.getUint16(1, /*littleEndian=*/true);
+                return value.getUint16(1, true);
             } else {
-                // If the bit is 0, the value is an 8-bit integer.
                 return value.getUint8(1);
             }
         }
 
-        /**
-         * Handles the disconnection event.
-         */
         function onDisconnected() {
             bluetoothStatusElem.textContent = 'Dispositivo desconectado.';
             bluetoothStatusElem.classList.remove('text-green-600');
             bluetoothStatusElem.classList.add('text-red-600');
-            
+
             heartRateDisplayElem.textContent = '--';
             heartIconElem.classList.remove('heartbeat-animation');
             connectBluetoothBtn.disabled = false;
-            
-            // Clean up the event listener
+
             if (heartRateCharacteristic) {
                 heartRateCharacteristic.removeEventListener('characteristicvaluechanged', handleHeartRateNotification);
                 heartRateCharacteristic = null;
             }
+            updateFullScreenHeartRate('--');
         }
-    </script>
 
+        // --- Pantalla Completa ---
+        function enterFullScreen() {
+            fullscreenContainer.classList.remove('hidden');
+            if (document.documentElement.requestFullscreen) {
+                fullscreenContainer.requestFullscreen();
+            }
+        }
+        function exitFullScreen() {
+            fullscreenContainer.classList.add('hidden');
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            }
+        }
+        fullscreenBtn.addEventListener('click', enterFullScreen);
+        exitFullscreenBtn.addEventListener('click', exitFullScreen);
+
+        function updateFullScreenHeartRate(bpm) {
+            if (!fullscreenContainer.classList.contains('hidden')) {
+                fullscreenHeartRate.textContent = bpm;
+            }
+        }
+
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement) {
+                fullscreenContainer.classList.add('hidden');
+            }
+        });
+
+        // Inicializa valor BPM en fullscreen
+        updateFullScreenHeartRate('--');
+    </script>
 </body>
 </html>
