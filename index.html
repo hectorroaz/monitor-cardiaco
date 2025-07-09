@@ -31,13 +31,29 @@
             animation-iteration-count: infinite;
             animation-timing-function: ease-in-out;
         }
-        /* Pantalla completa personalizada */
+        /* Pantalla completa BPM ultra grande */
         #fullscreenContainer {
             background: #000 !important;
         }
+        #fullscreenHeartRate {
+            width: 100vw;
+            text-align: center;
+            word-break: break-all;
+            white-space: nowrap;
+            font-size: 22vw;
+            line-height: 1;
+            letter-spacing: -0.03em;
+        }
+        #fullscreenContainer .bpm-label {
+            font-size: 7vw;
+            line-height: 1.1;
+        }
         @media (orientation: landscape) {
             #fullscreenHeartRate {
-                font-size: 18vw !important;
+                font-size: 35vw !important;
+            }
+            #fullscreenContainer .bpm-label {
+                font-size: 5vw !important;
             }
         }
     </style>
@@ -76,11 +92,20 @@
         </div>
     </div>
 
-    <!-- Fullscreen Container -->
+    <!-- Fullscreen Container ultra grande -->
     <div id="fullscreenContainer" class="hidden fixed inset-0 bg-black flex flex-col justify-center items-center z-50">
-        <div id="fullscreenHeartRate" class="text-white text-[14vw] font-extrabold">--</div>
-        <div class="text-xl text-gray-300">BPM</div>
-        <button id="exitFullscreenBtn" class="mt-8 bg-gray-800 text-white px-8 py-4 rounded-lg text-xl hover:bg-gray-900">Salir</button>
+        <div class="flex-1 w-full flex flex-col justify-center items-center">
+            <div id="fullscreenHeartRate"
+                 class="text-white font-extrabold">
+                --
+            </div>
+            <div class="bpm-label text-gray-300 mb-8">
+                BPM
+            </div>
+        </div>
+        <button id="exitFullscreenBtn" class="mb-10 bg-gray-800 text-white px-10 py-5 rounded-xl text-2xl hover:bg-gray-900">
+            Salir
+        </button>
     </div>
 
     <script>
